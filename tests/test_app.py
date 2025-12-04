@@ -1,28 +1,12 @@
 
+import pytest
+from fastapi.testclient import TestClient
+from src.app import app, activities
+import copy
 
-"""
-High School Management System API
+client = TestClient(app)
 
-A super simple FastAPI application that allows students to view and sign up
-for extracurricular activities at Mergington High School.
-"""
-
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
-import os
-from pathlib import Path
-
-app = FastAPI(title="Mergington High School API",
-              description="API for viewing and signing up for extracurricular activities")
-
-# Mount the static files directory
-current_dir = Path(__file__).parent
-app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
-          "static")), name="static")
-
-# In-memory activity database
-activities = {
+ORIGINAL_ACTIVITIES = {
     "Chess Club": {
         "description": "Learn strategies and compete in chess tournaments",
         "schedule": "Fridays, 3:30 PM - 5:00 PM",
@@ -41,7 +25,6 @@ activities = {
         "max_participants": 30,
         "participants": ["john@mergington.edu", "olivia@mergington.edu"]
     },
-    # Sports related activities
     "Soccer Team": {
         "description": "Join the school soccer team and compete in matches",
         "schedule": "Wednesdays, 4:00 PM - 5:30 PM",
@@ -54,7 +37,6 @@ activities = {
         "max_participants": 15,
         "participants": ["ethan@mergington.edu", "ava@mergington.edu"]
     },
-    # Artistic activities
     "Drama Club": {
         "description": "Act, direct, and produce school plays and performances",
         "schedule": "Thursdays, 4:00 PM - 5:30 PM",
@@ -67,7 +49,6 @@ activities = {
         "max_participants": 16,
         "participants": ["noah@mergington.edu", "amelia@mergington.edu"]
     },
-    # Intellectual activities
     "Math Olympiad": {
         "description": "Prepare for math competitions and solve challenging problems",
         "schedule": "Fridays, 4:00 PM - 5:30 PM",
@@ -81,44 +62,42 @@ activities = {
         "participants": ["elijah@mergington.edu", "harper@mergington.edu"]
     }
 }
-# ...existing code...
 
-@app.post("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
-    """Remove a student from an activity"""
-    if activity_name not in activities:
-        raise HTTPException(status_code=404, detail="Activity not found")
-    activity = activities[activity_name]
-    if email not in activity["participants"]:
-        raise HTTPException(status_code=400, detail="Student not registered for this activity")
-    activity["participants"].remove(email)
-    return {"message": f"Unregistered {email} from {activity_name}"}
+@pytest.fixture(autouse=True)
+def reset_activities():
+    # Reset the activities dict before each test
+    activities.clear()
+    activities.update(copy.deepcopy(ORIGINAL_ACTIVITIES))
 
+def test_get_activities():
+    response = client.get("/activities")
+    assert response.status_code == 200
+    data = response.json()
+    assert "Chess Club" in data
+    assert "Programming Class" in data
 
-@app.get("/")
-def root():
-    return RedirectResponse(url="/static/index.html")
+def test_signup_for_activity():
+    email = "newstudent@mergington.edu"
+    activity = "Chess Club"
+    # Ensure not already signed up
+    client.post(f"/activities/{activity}/unregister?email={email}")
+    response = client.post(f"/activities/{activity}/signup?email={email}")
+    assert response.status_code == 200
+    assert response.json()["message"] == f"Signed up {email} for {activity}"
+    # Try signing up again (should fail)
+    response2 = client.post(f"/activities/{activity}/signup?email={email}")
+    assert response2.status_code == 400
+    assert "already signed up" in response2.json()["detail"]
 
-
-@app.get("/activities")
-def get_activities():
-    return activities
-
-
-@app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
-    # Validate activity exists
-    if activity_name not in activities:
-        raise HTTPException(status_code=404, detail="Activity not found")
-
-    # Get the specific activity
-    activity = activities[activity_name]
-
-    # Validate student is not already signed up
-    if email in activity["participants"]:
-        raise HTTPException(status_code=400, detail="Student already signed up for this activity")
-
-    # Add student
-    activity["participants"].append(email)
-    return {"message": f"Signed up {email} for {activity_name}"}
+def test_unregister_from_activity():
+    email = "newstudent@mergington.edu"
+    activity = "Chess Club"
+    # Ensure signed up
+    client.post(f"/activities/{activity}/signup?email={email}")
+    response = client.post(f"/activities/{activity}/unregister?email={email}")
+    assert response.status_code == 200
+    assert response.json()["message"] == f"Unregistered {email} from {activity}"
+    # Try unregistering again (should fail)
+    response2 = client.post(f"/activities/{activity}/unregister?email={email}")
+    assert response2.status_code == 400
+    assert "not registered" in response2.json()["detail"]
